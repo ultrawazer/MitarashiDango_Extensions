@@ -7,14 +7,10 @@ Inspired by Mihon/Tachiyomi extensions, each extension is an isolated scraper mo
 
 ## Development & Building
 
-1. Install dependencies:
-   \\\ash
-   npm install
-   \\\
+1. Install dependencies: npm install
+   
 
-2. Build all extensions:
-   \\\ash
-   npm run build
-   \\\
+2. Build all extensions: npm run build
+   
 
 Compiled bundles will be generated into \dist/<id>.js\ along with the repository manifest at \dist/index.min.json\.
