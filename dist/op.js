@@ -17,7 +17,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// extensions/op/index.ts
+// ../MitarashiDango_Extensions/extensions/op/index.ts
 var index_exports = {};
 __export(index_exports, {
   OpExtension: () => OpExtension,
@@ -26,7 +26,7 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
-// packages/core/src/index.ts
+// ../MitarashiDango_Extensions/packages/core/src/index.ts
 var SimpleCache = class {
   store = /* @__PURE__ */ new Map();
   get(key) {
@@ -166,7 +166,7 @@ function buildQueryVariants(title, romaji) {
   return out;
 }
 
-// extensions/op/index.ts
+// ../MitarashiDango_Extensions/extensions/op/index.ts
 var metadata = {
   id: "op",
   name: "OP",

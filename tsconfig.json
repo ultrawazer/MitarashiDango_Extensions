@@ -11,7 +11,8 @@
       "@dango/extension-core": [
         "packages/core/src/index.ts"
       ]
-    }
+    },
+    "ignoreDeprecations": "6.0"
   },
   "include": [
     "packages",

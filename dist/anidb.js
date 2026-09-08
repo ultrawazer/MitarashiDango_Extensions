@@ -17,7 +17,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// extensions/anidb/index.ts
+// ../MitarashiDango_Extensions/extensions/anidb/index.ts
 var index_exports = {};
 __export(index_exports, {
   AniDBExtension: () => AniDBExtension,
@@ -27,7 +27,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 var import_got_scraping = require("got-scraping");
 
-// packages/core/src/index.ts
+// ../MitarashiDango_Extensions/packages/core/src/index.ts
 var SimpleCache = class {
   store = /* @__PURE__ */ new Map();
   get(key) {
@@ -47,7 +47,7 @@ var SimpleCache = class {
   }
 };
 
-// extensions/anidb/index.ts
+// ../MitarashiDango_Extensions/extensions/anidb/index.ts
 var metadata = {
   id: "anidb",
   name: "AniDB (anidb.app)",

@@ -17,7 +17,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// extensions/vixsrc/index.ts
+// ../MitarashiDango_Extensions/extensions/vixsrc/index.ts
 var index_exports = {};
 __export(index_exports, {
   VixSrcExtension: () => VixSrcExtension,
