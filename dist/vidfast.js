@@ -17,7 +17,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// ../MitarashiDango_Extensions/extensions/vidfast/index.ts
+// extensions/vidfast/index.ts
 var index_exports = {};
 __export(index_exports, {
   VidFastExtension: () => VidFastExtension,

@@ -12,6 +12,7 @@ export interface ExtensionMetadata {
   description?: string
   icon?: string
   author?: string
+  authUrl?: string
 }
 
 export interface Show {
@@ -120,9 +121,8 @@ export interface SearchOptions {
 export interface ExtensionContext {
   ua?: string
   cookie?: string
-  jasmr_ua?: string
-  jasmr_cookie?: string
   headers?: Record<string, string>
+  [key: string]: any
 }
 
 export interface IExtension {

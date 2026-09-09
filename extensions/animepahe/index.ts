@@ -17,11 +17,12 @@ import {
 export const metadata: ExtensionMetadata = {
   id: 'animepahe',
   name: 'AnimePahe',
-  version: '1.0.0',
+  version: '1.0.1',
   type: 'anime',
   lang: 'en',
   mature: false,
   description: 'Stream anime directly from AnimePahe with sub/dub support',
+  authUrl: 'https://animepahe.pw',
 }
 
 interface AnimePaheSearchResult {

@@ -13,11 +13,12 @@ import {
 export const metadata: ExtensionMetadata = {
   id: 'jasmr',
   name: 'Japanese ASMR',
-  version: '1.0.0',
+  version: '1.0.1',
   type: 'asmr',
   lang: 'ja',
   mature: true,
   description: 'Japanese ASMR audio drama streams from japaneseasmr.com',
+  authUrl: 'https://japaneseasmr.com',
 }
 
 const BASE_URL = 'https://japaneseasmr.com'
@@ -28,10 +29,11 @@ export class JasmrExtension implements AsmrExtension {
 
   private async fetchHtml(url: string, context?: ExtensionContext): Promise<string | null> {
     const headers: Record<string, string> = {
-      'User-Agent': context?.jasmr_ua || 'Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36',
+      'User-Agent': context?.ua || context?.jasmr_ua || 'Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36',
       Referer: BASE_URL + '/',
     }
-    if (context?.jasmr_cookie) headers['Cookie'] = context.jasmr_cookie
+    const cookie = context?.cookie || context?.jasmr_cookie
+    if (cookie) headers['Cookie'] = cookie
 
     try {
       const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) })

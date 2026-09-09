@@ -17,7 +17,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// ../MitarashiDango_Extensions/extensions/ht/index.ts
+// extensions/ht/index.ts
 var index_exports = {};
 __export(index_exports, {
   HtExtension: () => HtExtension,
@@ -26,7 +26,7 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
-// ../MitarashiDango_Extensions/packages/core/src/index.ts
+// packages/core/src/index.ts
 var SimpleCache = class {
   store = /* @__PURE__ */ new Map();
   get(key) {
@@ -166,7 +166,7 @@ function buildQueryVariants(title, romaji) {
   return out;
 }
 
-// ../MitarashiDango_Extensions/extensions/ht/index.ts
+// extensions/ht/index.ts
 var metadata = {
   id: "ht",
   name: "HT",
