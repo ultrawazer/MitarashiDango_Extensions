@@ -45341,7 +45341,7 @@ function buildQueryVariants(title, romaji) {
 var metadata = {
   id: "animepahe",
   name: "AnimePahe",
-  version: "1.0.1",
+  version: "1.0.2",
   type: "anime",
   lang: "en",
   mature: false,
@@ -45373,11 +45373,40 @@ var AnimePaheExtension = class {
         method: "GET",
         headers,
         responseType: responseType === "json" ? "json" : "text",
-        timeout: { request: 3e4 },
+        timeout: { request: url.includes("kwik") ? 4e3 : 3e4 },
         followRedirect: true,
         throwHttpErrors: false
       });
       if (resp.statusCode === 403 || resp.statusCode === 503) {
+        if (!url.includes("animepahe")) {
+          return null;
+        }
+        if (context?.flaresolverrUrl) {
+          try {
+            const fsResp = await (0, import_got_scraping.gotScraping)({
+              url: `${context.flaresolverrUrl}/v1`,
+              method: "POST",
+              json: {
+                cmd: "request.get",
+                url,
+                maxTimeout: context.flaresolverrTimeout || 25e3
+              },
+              responseType: "json",
+              timeout: { request: (context.flaresolverrTimeout || 25e3) + 1e4 },
+              throwHttpErrors: false
+            });
+            const fsData = fsResp.body;
+            if (fsData && fsData.status === "ok" && fsData.solution) {
+              const resHtml = fsData.solution.response || "";
+              if (responseType === "json") {
+                const jsonStr = resHtml.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i)?.[1] || resHtml;
+                return JSON.parse(jsonStr);
+              }
+              return resHtml;
+            }
+          } catch {
+          }
+        }
         throw new Error("AUTH_REQUIRED");
       }
       if (resp.statusCode !== 200) {
@@ -45441,7 +45470,6 @@ var AnimePaheExtension = class {
       const list = data2.data || data2.results || [];
       for (const ep of list) {
         const epNum = String(ep.episode ?? ep.number ?? "");
-        const epSession = ep.session || ep.release_session || "";
         if (epNum) {
           episodes.push(epNum);
           availableEpisodesDetail.push({
@@ -45468,38 +45496,64 @@ var AnimePaheExtension = class {
     return p.replace(/\b\w+\b/g, (e2) => d[e2] || e2);
   }
   async resolveKwik(kwikUrl, context) {
-    const html3 = await this.makeRequest(kwikUrl, "text", this.BASE_URL + "/", context);
-    if (!html3) return null;
-    const match = html3.match(/eval\(function\(p,a,c,k,e,d\)[\s\S]*?\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)/);
-    if (match) {
-      const [_, p, a, c, k] = match;
-      const unpacked = this.unpackKwik(p, parseInt(a, 10), parseInt(c, 10), k.split("|"));
-      const urlMatch = unpacked.match(/https:\/\/[^"']+\.m3u8[^"']*/i) || unpacked.match(/https:\/\/[^"']+\.mp4[^"']*/i);
-      if (urlMatch) return urlMatch[0];
-      const formAction = unpacked.match(/action="([^"]+)"/);
-      const formToken = unpacked.match(/value="([^"]+)"/);
-      if (formAction && formToken) {
+    try {
+      const html3 = await this.makeRequest(kwikUrl, "text", this.BASE_URL + "/", context);
+      if (!html3) return null;
+      const match = html3.match(/eval\(function\(p,a,c,k,e,d\)[\s\S]*?\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)/);
+      if (match) {
+        const [_, p, a, c, k] = match;
+        const unpacked = this.unpackKwik(p, parseInt(a, 10), parseInt(c, 10), k.split("|"));
+        const urlMatch = unpacked.match(/https:\/\/[^"']+\.m3u8[^"']*/i) || unpacked.match(/https:\/\/[^"']+\.mp4[^"']*/i);
+        if (urlMatch) return urlMatch[0];
       }
+      const directMatch = html3.match(/https:\/\/[^"']+\.m3u8[^"']*/i);
+      return directMatch ? directMatch[0] : null;
+    } catch {
+      return null;
     }
-    const directMatch = html3.match(/https:\/\/[^"']+\.m3u8[^"']*/i);
-    return directMatch ? directMatch[0] : null;
   }
   async getStreamUrls(showId, episodeNumber, _mode, context) {
-    const playUrl = `${this.BASE_URL}/play/${showId}`;
+    let playUrl = `${this.BASE_URL}/play/${showId}`;
+    if (!showId.includes("/") && episodeNumber) {
+      try {
+        let page = 1;
+        let lastPage = 1;
+        let foundSession = null;
+        while (page <= lastPage && !foundSession) {
+          const epUrl = `${this.API_URL}?m=release&id=${showId}&sort=episode_asc&page=${page}`;
+          const relData = await this.makeRequest(epUrl, "json", void 0, context);
+          if (!relData) break;
+          lastPage = relData.last_page || relData.lastPage || 1;
+          const epList = relData.data || relData.results || [];
+          for (const ep of epList) {
+            const num = String(ep.episode ?? ep.number ?? "");
+            if (num === String(episodeNumber)) {
+              foundSession = ep.session || ep.release_session || null;
+              break;
+            }
+          }
+          page++;
+        }
+        if (foundSession) {
+          playUrl = `${this.BASE_URL}/play/${showId}/${foundSession}`;
+        }
+      } catch {
+      }
+    }
     const html3 = await this.makeRequest(playUrl, "text", this.BASE_URL + "/", context);
     if (!html3) return [];
     const $2 = load(html3);
     const sources = [];
-    const dropDownButtons = $2('#pickDownload a, .dropdown-item, a[href*="kwik"]');
+    const dropDownButtons = $2('#pickDownload a, .dropdown-item, a[href*="kwik"], #resolutionMenu button, button[data-src*="kwik"]');
     const kwikLinks = [];
     dropDownButtons.each((_, el) => {
-      const href = $2(el).attr("href") || "";
+      const href = $2(el).attr("data-src") || $2(el).attr("href") || "";
       const text3 = $2(el).text().trim();
       if (href.includes("kwik") || href.includes("uwu")) {
         kwikLinks.push({ url: href, quality: text3 || "Default" });
       }
     });
-    for (const kwik of kwikLinks) {
+    for (const kwik of kwikLinks.slice(0, 2)) {
       try {
         const streamUrl = await this.resolveKwik(kwik.url, context);
         if (streamUrl) {
@@ -45517,6 +45571,22 @@ var AnimePaheExtension = class {
           });
         }
       } catch {
+      }
+    }
+    if (sources.length === 0 && kwikLinks.length > 0) {
+      for (const kwik of kwikLinks) {
+        sources.push({
+          sourceName: `AnimePahe (${kwik.quality})`,
+          links: [
+            {
+              resolutionStr: kwik.quality,
+              link: kwik.url,
+              hls: false,
+              headers: { Referer: "https://kwik.cx/" }
+            }
+          ],
+          type: "iframe"
+        });
       }
     }
     return sources;

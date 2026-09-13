@@ -14,7 +14,7 @@ import {
 export const metadata: ExtensionMetadata = {
   id: 'wh',
   name: 'WH',
-  version: '1.0.0',
+  version: '1.0.1',
   type: 'anime',
   lang: 'en',
   mature: true,
@@ -42,12 +42,12 @@ export class WhExtension implements AnimeExtension {
   readonly metadata = metadata
   private cache = new SimpleCache()
 
-  private async fetchHtml(url: string): Promise<string | null> {
+  private async fetchHtml(url: string, referer: string = BASE_URL + '/'): Promise<string | null> {
     try {
       const res = await fetch(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36',
-          Referer: BASE_URL + '/',
+          Referer: referer,
         },
         signal: AbortSignal.timeout(15000),
       })
@@ -69,19 +69,20 @@ export class WhExtension implements AnimeExtension {
     const $ = cheerio.load(html)
     const results: Show[] = []
 
-    $('article, .post-item, .video-block').each((_, el) => {
-      const link = $(el).find('a').first()
-      const href = link.attr('href') || ''
-      const title = $(el).find('.entry-title, .title').text().trim() || link.attr('title') || ''
+    $('article, .item').each((_, el) => {
+      const titleEl = $(el).find('.data h3 a, h3 a, .title a, a[title]').first()
+      const rawTitle = titleEl.text().trim() || titleEl.attr('title') || $(el).find('img').attr('title') || ''
+      const cleanTitle = rawTitle.replace(/^Watch\s+Hentai\s+/i, '').replace(/\[.*?\]/g, '').split('\n')[0].trim()
+      const href = titleEl.attr('href') || $(el).find('a').first().attr('href') || ''
       const img = $(el).find('img').attr('data-src') || $(el).find('img').attr('src') || ''
       const slug = href.replace(BASE_URL, '').replace(/^\/+|\/+$/g, '')
 
-      if (title && slug) {
+      if (cleanTitle && slug && !slug.startsWith('videos/') && !results.find((r) => r.id === slug)) {
         results.push({
           _id: slug,
           id: slug,
-          name: title,
-          englishName: title,
+          name: cleanTitle,
+          englishName: cleanTitle,
           thumbnail: img,
           type: 'OVA',
           isAdult: true,
@@ -109,18 +110,33 @@ export class WhExtension implements AnimeExtension {
   }
 
   async getEpisodes(showId: string): Promise<EpisodeDetails | null> {
-    const html = await this.fetchHtml(`${BASE_URL}/${showId}/`)
+    const cleanId = showId.replace(/^\/+|\/+$/g, '')
+    const pageUrl = `${BASE_URL}/${cleanId}/`
+    const html = await this.fetchHtml(pageUrl)
     if (!html) return null
 
     const $ = cheerio.load(html)
     const episodes: string[] = []
+    const epUrls = new Map<string, string>()
 
-    $('.episodes a, .episode-list a').each((_, el) => {
-      const num = $(el).text().trim().replace(/[^0-9]/g, '')
-      if (num && !episodes.includes(num)) episodes.push(num)
+    $('ul.episodios li a, .episodios li a, .episodios a').each((_, el) => {
+      const href = $(el).attr('href') || ''
+      if (!href || href.startsWith('#') || !href.includes('/videos/')) return
+      const text = $(el).text() || ''
+      const m = text.match(/Episode\s*(\d+)/i) || href.match(/episode-(\d+)/i) || text.match(/(\d+)/)
+      if (m) {
+        const num = m[1]
+        if (!episodes.includes(num)) {
+          episodes.push(num)
+          epUrls.set(num, href)
+        }
+      }
     })
 
     if (episodes.length === 0) episodes.push('1')
+    if (epUrls.size > 0) {
+      this.cache.set(`ep_urls_${cleanId}`, Object.fromEntries(epUrls), 3600)
+    }
 
     return {
       episodes,
@@ -129,14 +145,60 @@ export class WhExtension implements AnimeExtension {
   }
 
   async getStreamUrls(showId: string, episodeNumber: string): Promise<VideoSource[] | null> {
-    const html = await this.fetchHtml(`${BASE_URL}/${showId}/episode-${episodeNumber}/`) || await this.fetchHtml(`${BASE_URL}/${showId}/`)
-    if (!html) return []
+    const cleanId = showId.replace(/^\/+|\/+$/g, '')
+    const cachedUrls = this.cache.get<Record<string, string>>(`ep_urls_${cleanId}`)
+    let epUrl = cachedUrls ? cachedUrls[String(episodeNumber)] : null
+
+    if (!epUrl) {
+      const baseSlug = cleanId.replace(/^series\//, '')
+      epUrl = `${BASE_URL}/videos/${baseSlug}-episode-${episodeNumber}-id-01/`
+    }
+
+    let epHtml = await this.fetchHtml(epUrl)
+    if (!epHtml && epUrl.includes('-id-01')) {
+      epHtml = await this.fetchHtml(epUrl.replace('-id-01', ''))
+    }
+    if (!epHtml) {
+      epHtml = await this.fetchHtml(`${BASE_URL}/${cleanId}/`)
+    }
+    if (!epHtml) return []
+
+    const $ = cheerio.load(epHtml)
+    const iframe = $('#search_iframe, iframe.metaframe, iframe')
+    const playerUrl =
+      iframe.attr('data-primary-player-url') ||
+      iframe.attr('data-alternate-player-url') ||
+      $('meta[itemprop="contentUrl"]').attr('content') ||
+      iframe.attr('src')
 
     const sources: VideoSource[] = []
-    const encodedMatches = html.matchAll(/data-video=["']([^"']+)["']/g)
+    if (playerUrl && playerUrl.startsWith('http')) {
+      const playerHtml = await this.fetchHtml(playerUrl, epUrl)
+      if (playerHtml) {
+        const mp4Matches = [...playerHtml.matchAll(/https?:\/\/[^\s"'<>]+\.(?:mp4|m3u8)[^\s"'<>]*/g)].map((m) => m[0])
+        const uniqueLinks = [...new Set(mp4Matches)]
+        if (uniqueLinks.length > 0) {
+          sources.push({
+            sourceName: 'WH Direct',
+            links: uniqueLinks.map((l) => ({ resolutionStr: '1080p', link: l, hls: l.includes('.m3u8') })),
+            type: 'player',
+          })
+        }
+      }
+      if (sources.length === 0) {
+        sources.push({
+          sourceName: 'WH Player',
+          links: [],
+          type: 'iframe',
+          iframeUrl: playerUrl,
+        })
+      }
+    }
+
+    const encodedMatches = epHtml.matchAll(/data-video=["']([^"']+)["']/g)
     for (const match of encodedMatches) {
       const decoded = whDecode(match[1])
-      if (decoded.includes('http')) {
+      if (decoded.includes('http') && !sources.find((s) => s.links?.[0]?.link === decoded)) {
         sources.push({
           sourceName: 'WH Stream',
           links: [{ resolutionStr: 'Auto', link: decoded, hls: decoded.includes('.m3u8') }],

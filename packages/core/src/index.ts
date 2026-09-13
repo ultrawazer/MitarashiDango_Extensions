@@ -56,6 +56,8 @@ export interface Show {
   tags?: { name: string }[]
   studios?: { name: string }[]
   status?: string
+  rj?: string
+  [key: string]: any
 }
 
 export interface VideoLink {
@@ -122,6 +124,8 @@ export interface ExtensionContext {
   ua?: string
   cookie?: string
   headers?: Record<string, string>
+  flaresolverrUrl?: string
+  flaresolverrTimeout?: number
   [key: string]: any
 }
 

@@ -13,7 +13,7 @@ import {
 export const metadata: ExtensionMetadata = {
   id: 'jasmr',
   name: 'Japanese ASMR',
-  version: '1.0.1',
+  version: '1.0.2',
   type: 'asmr',
   lang: 'ja',
   mature: true,
@@ -45,9 +45,33 @@ export class JasmrExtension implements AsmrExtension {
     }
   }
 
+  private async resolvePostUrl(idOrRj: string, context?: ExtensionContext): Promise<string | null> {
+    if (!idOrRj) return null
+    const cached = this.cache.get<string>('post_url_' + idOrRj)
+    if (cached) return cached
+
+    if (/^\d+$/.test(idOrRj)) {
+      const u = `${BASE_URL}/${idOrRj}/`
+      this.cache.set('post_url_' + idOrRj, u, 86400)
+      return u
+    }
+
+    const searchHtml = await this.fetchHtml(`${BASE_URL}/?s=${encodeURIComponent(idOrRj)}`, context)
+    if (!searchHtml) return null
+    const $ = cheerio.load(searchHtml)
+    const href = $('.entry-title a').first().attr('href') || null
+    if (href) {
+      this.cache.set('post_url_' + idOrRj, href, 86400)
+    }
+    return href
+  }
+
   async browse(options: AsmrBrowseOptions, context?: ExtensionContext): Promise<{ shows: Show[]; hasNext: boolean }> {
     const page = options.page || 1
-    const q = options.query ? `?s=${encodeURIComponent(options.query)}` : `/page/${page}/`
+    let q = `/page/${page}/`
+    if (options.query) {
+      q = page > 1 ? `/page/${page}/?s=${encodeURIComponent(options.query)}` : `?s=${encodeURIComponent(options.query)}`
+    }
     const url = `${BASE_URL}${q}`
     const html = await this.fetchHtml(url, context)
     if (!html) return { shows: [], hasNext: false }
@@ -58,18 +82,28 @@ export class JasmrExtension implements AsmrExtension {
     $('article, .post').each((_, el) => {
       const title = $(el).find('.entry-title a').text().trim()
       const href = $(el).find('.entry-title a').attr('href') || ''
-      const rjMatch = title.match(/RJ\d+/i) || href.match(/RJ\d+/i)
-      const rjCode = rjMatch ? rjMatch[0].toUpperCase() : ''
       const thumb = $(el).find('img').attr('data-src') || $(el).find('img').attr('src') || ''
+      const text = $(el).text()
+      const rjMatch = title.match(/RJ\d+/i) || href.match(/RJ\d+/i) || thumb.match(/RJ\d+/i) || text.match(/RJ\d+/i)
+      const rjCode = rjMatch ? rjMatch[0].toUpperCase() : ''
+      const idMatch = href.match(/\/(\d+)\/?$/)
+      const postId = idMatch ? idMatch[1] : ''
+      const showId = rjCode || postId
 
-      if (title && rjCode) {
+      if (title && showId) {
+        if (href) {
+          this.cache.set('post_url_' + showId, href, 86400)
+          if (rjCode) this.cache.set('post_url_' + rjCode, href, 86400)
+          if (postId) this.cache.set('post_url_' + postId, href, 86400)
+        }
         shows.push({
-          _id: rjCode,
-          id: rjCode,
+          _id: showId,
+          id: showId,
           name: title,
           thumbnail: thumb,
           type: 'ASMR',
           isAdult: true,
+          rj: rjCode || showId,
         })
       }
     })
@@ -78,40 +112,61 @@ export class JasmrExtension implements AsmrExtension {
     return { shows, hasNext }
   }
 
-  async getEpisodes(rjCode: string, context?: ExtensionContext): Promise<EpisodeDetails | null> {
-    const url = `${BASE_URL}/${rjCode}/`
-    const html = await this.fetchHtml(url, context)
+  async getEpisodes(idOrRj: string, context?: ExtensionContext): Promise<EpisodeDetails | null> {
+    const postUrl = await this.resolvePostUrl(idOrRj, context)
+    if (!postUrl) return null
+    const html = await this.fetchHtml(postUrl, context)
     if (!html) return null
 
     const $ = cheerio.load(html)
     const tracks: string[] = []
-    $('audio source, a[href*=".mp3"], a[href*=".m4a"]').each((i, el) => {
-      tracks.push(String(i + 1))
+    $('#plyr-chapter-playlist tr, .tracklist tr').each((_, el) => {
+      const time = $(el).find('td').first().text().trim()
+      if (/^\d{2}:\d{2}/.test(time)) {
+        tracks.push(String(tracks.length + 1))
+      }
     })
 
     return {
       episodes: tracks.length ? tracks : ['1'],
-      description: $('.entry-content p').text().trim() || '',
+      description: $('.entry-content p').first().text().trim() || '',
     }
   }
 
-  async getStreamUrls(rjCode: string, _episodeNumber?: string, context?: ExtensionContext): Promise<VideoSource[] | null> {
-    const url = `${BASE_URL}/${rjCode}/`
-    const html = await this.fetchHtml(url, context)
+  async getStreamUrls(idOrRj: string, _episodeNumber?: string, context?: ExtensionContext): Promise<VideoSource[] | null> {
+    const postUrl = await this.resolvePostUrl(idOrRj, context)
+    if (!postUrl) return []
+    const html = await this.fetchHtml(postUrl, context)
     if (!html) return []
 
     const $ = cheerio.load(html)
     const links: any[] = []
 
-    $('audio source, a[href*=".mp3"], a[href*=".m4a"]').each((_, el) => {
-      const src = $(el).attr('src') || $(el).attr('href')
+    const addLink = (src?: string) => {
       if (src && !links.find((l) => l.link === src)) {
         links.push({
           resolutionStr: 'Audio Track',
           link: src,
-          hls: false,
+          hls: src.includes('.m3u8'),
         })
       }
+    }
+
+    const directAudio = $('audio#audio, audio').attr('src')
+    if (directAudio) addLink(directAudio)
+
+    $('audio source, source').each((_, el) => {
+      addLink($(el).attr('src'))
+    })
+
+    $('a[href*=".mp3"], a[href*=".m4a"], a[href*=".m3u8"]').each((_, el) => {
+      addLink($(el).attr('href'))
+    })
+
+    $('script').each((_, el) => {
+      const sc = $(el).html() || ''
+      const m = sc.match(/audioSrc\s*=\s*['"]([^'"]+)['"]/)
+      if (m) addLink(m[1])
     })
 
     return [
@@ -123,20 +178,42 @@ export class JasmrExtension implements AsmrExtension {
     ]
   }
 
-  async getImages(rjCode: string, context?: ExtensionContext): Promise<string[]> {
-    const url = `${BASE_URL}/${rjCode}/`
-    const html = await this.fetchHtml(url, context)
+  async getImages(idOrRj: string, context?: ExtensionContext): Promise<string[]> {
+    const postUrl = await this.resolvePostUrl(idOrRj, context)
+    if (!postUrl) return []
+    const html = await this.fetchHtml(postUrl, context)
     if (!html) return []
 
     const $ = cheerio.load(html)
     const images: string[] = []
 
-    $('.entry-content img').each((_, el) => {
+    $('.entry-content img, .op-square img').each((_, el) => {
       const src = $(el).attr('data-src') || $(el).attr('src')
       if (src && !images.includes(src)) images.push(src)
     })
 
     return images
+  }
+
+  async getChapters(idOrRj: string, context?: ExtensionContext): Promise<unknown[]> {
+    const postUrl = await this.resolvePostUrl(idOrRj, context)
+    if (!postUrl) return []
+    const html = await this.fetchHtml(postUrl, context)
+    if (!html) return []
+
+    const $ = cheerio.load(html)
+    const chapters: { title: string; time: string }[] = []
+
+    $('#plyr-chapter-playlist tr').each((_, el) => {
+      const time = $(el).find('td').first().text().trim()
+      const rawTitle = $(el).find('td a, td:nth-child(2)').text().trim()
+      const cleanTitle = rawTitle.replace(/^\d{2}:\d{2}:\d{2}\s*/, '').replace(/#$/, '').trim()
+      if (cleanTitle && time && /^\d{2}:\d{2}/.test(time)) {
+        chapters.push({ title: cleanTitle, time })
+      }
+    })
+
+    return chapters
   }
 }
 

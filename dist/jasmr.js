@@ -45218,7 +45218,7 @@ var SimpleCache = class {
 var metadata = {
   id: "jasmr",
   name: "Japanese ASMR",
-  version: "1.0.1",
+  version: "1.0.2",
   type: "asmr",
   lang: "ja",
   mature: true,
@@ -45245,9 +45245,30 @@ var JasmrExtension = class {
       return null;
     }
   }
+  async resolvePostUrl(idOrRj, context) {
+    if (!idOrRj) return null;
+    const cached = this.cache.get("post_url_" + idOrRj);
+    if (cached) return cached;
+    if (/^\d+$/.test(idOrRj)) {
+      const u = `${BASE_URL}/${idOrRj}/`;
+      this.cache.set("post_url_" + idOrRj, u, 86400);
+      return u;
+    }
+    const searchHtml = await this.fetchHtml(`${BASE_URL}/?s=${encodeURIComponent(idOrRj)}`, context);
+    if (!searchHtml) return null;
+    const $2 = load(searchHtml);
+    const href = $2(".entry-title a").first().attr("href") || null;
+    if (href) {
+      this.cache.set("post_url_" + idOrRj, href, 86400);
+    }
+    return href;
+  }
   async browse(options, context) {
     const page = options.page || 1;
-    const q = options.query ? `?s=${encodeURIComponent(options.query)}` : `/page/${page}/`;
+    let q = `/page/${page}/`;
+    if (options.query) {
+      q = page > 1 ? `/page/${page}/?s=${encodeURIComponent(options.query)}` : `?s=${encodeURIComponent(options.query)}`;
+    }
     const url = `${BASE_URL}${q}`;
     const html3 = await this.fetchHtml(url, context);
     if (!html3) return { shows: [], hasNext: false };
@@ -45256,52 +45277,79 @@ var JasmrExtension = class {
     $2("article, .post").each((_, el) => {
       const title = $2(el).find(".entry-title a").text().trim();
       const href = $2(el).find(".entry-title a").attr("href") || "";
-      const rjMatch = title.match(/RJ\d+/i) || href.match(/RJ\d+/i);
-      const rjCode = rjMatch ? rjMatch[0].toUpperCase() : "";
       const thumb = $2(el).find("img").attr("data-src") || $2(el).find("img").attr("src") || "";
-      if (title && rjCode) {
+      const text3 = $2(el).text();
+      const rjMatch = title.match(/RJ\d+/i) || href.match(/RJ\d+/i) || thumb.match(/RJ\d+/i) || text3.match(/RJ\d+/i);
+      const rjCode = rjMatch ? rjMatch[0].toUpperCase() : "";
+      const idMatch = href.match(/\/(\d+)\/?$/);
+      const postId = idMatch ? idMatch[1] : "";
+      const showId = rjCode || postId;
+      if (title && showId) {
+        if (href) {
+          this.cache.set("post_url_" + showId, href, 86400);
+          if (rjCode) this.cache.set("post_url_" + rjCode, href, 86400);
+          if (postId) this.cache.set("post_url_" + postId, href, 86400);
+        }
         shows.push({
-          _id: rjCode,
-          id: rjCode,
+          _id: showId,
+          id: showId,
           name: title,
           thumbnail: thumb,
           type: "ASMR",
-          isAdult: true
+          isAdult: true,
+          rj: rjCode || showId
         });
       }
     });
     const hasNext = $2('.nav-previous, .next, a:contains("Next")').length > 0;
     return { shows, hasNext };
   }
-  async getEpisodes(rjCode, context) {
-    const url = `${BASE_URL}/${rjCode}/`;
-    const html3 = await this.fetchHtml(url, context);
+  async getEpisodes(idOrRj, context) {
+    const postUrl = await this.resolvePostUrl(idOrRj, context);
+    if (!postUrl) return null;
+    const html3 = await this.fetchHtml(postUrl, context);
     if (!html3) return null;
     const $2 = load(html3);
     const tracks = [];
-    $2('audio source, a[href*=".mp3"], a[href*=".m4a"]').each((i, el) => {
-      tracks.push(String(i + 1));
+    $2("#plyr-chapter-playlist tr, .tracklist tr").each((_, el) => {
+      const time = $2(el).find("td").first().text().trim();
+      if (/^\d{2}:\d{2}/.test(time)) {
+        tracks.push(String(tracks.length + 1));
+      }
     });
     return {
       episodes: tracks.length ? tracks : ["1"],
-      description: $2(".entry-content p").text().trim() || ""
+      description: $2(".entry-content p").first().text().trim() || ""
     };
   }
-  async getStreamUrls(rjCode, _episodeNumber, context) {
-    const url = `${BASE_URL}/${rjCode}/`;
-    const html3 = await this.fetchHtml(url, context);
+  async getStreamUrls(idOrRj, _episodeNumber, context) {
+    const postUrl = await this.resolvePostUrl(idOrRj, context);
+    if (!postUrl) return [];
+    const html3 = await this.fetchHtml(postUrl, context);
     if (!html3) return [];
     const $2 = load(html3);
     const links = [];
-    $2('audio source, a[href*=".mp3"], a[href*=".m4a"]').each((_, el) => {
-      const src = $2(el).attr("src") || $2(el).attr("href");
+    const addLink = (src) => {
       if (src && !links.find((l) => l.link === src)) {
         links.push({
           resolutionStr: "Audio Track",
           link: src,
-          hls: false
+          hls: src.includes(".m3u8")
         });
       }
+    };
+    const directAudio = $2("audio#audio, audio").attr("src");
+    if (directAudio) addLink(directAudio);
+    $2("audio source, source").each((_, el) => {
+      addLink($2(el).attr("src"));
+    });
+    $2('a[href*=".mp3"], a[href*=".m4a"], a[href*=".m3u8"]').each((_, el) => {
+      addLink($2(el).attr("href"));
+    });
+    $2("script").each((_, el) => {
+      const sc = $2(el).html() || "";
+      const m = sc.match(/audioSrc\s*=\s*['"]([^'"]+)['"]/);
+      if (m) addLink(m[1]);
     });
     return [
       {
@@ -45311,17 +45359,35 @@ var JasmrExtension = class {
       }
     ];
   }
-  async getImages(rjCode, context) {
-    const url = `${BASE_URL}/${rjCode}/`;
-    const html3 = await this.fetchHtml(url, context);
+  async getImages(idOrRj, context) {
+    const postUrl = await this.resolvePostUrl(idOrRj, context);
+    if (!postUrl) return [];
+    const html3 = await this.fetchHtml(postUrl, context);
     if (!html3) return [];
     const $2 = load(html3);
     const images = [];
-    $2(".entry-content img").each((_, el) => {
+    $2(".entry-content img, .op-square img").each((_, el) => {
       const src = $2(el).attr("data-src") || $2(el).attr("src");
       if (src && !images.includes(src)) images.push(src);
     });
     return images;
+  }
+  async getChapters(idOrRj, context) {
+    const postUrl = await this.resolvePostUrl(idOrRj, context);
+    if (!postUrl) return [];
+    const html3 = await this.fetchHtml(postUrl, context);
+    if (!html3) return [];
+    const $2 = load(html3);
+    const chapters = [];
+    $2("#plyr-chapter-playlist tr").each((_, el) => {
+      const time = $2(el).find("td").first().text().trim();
+      const rawTitle = $2(el).find("td a, td:nth-child(2)").text().trim();
+      const cleanTitle = rawTitle.replace(/^\d{2}:\d{2}:\d{2}\s*/, "").replace(/#$/, "").trim();
+      if (cleanTitle && time && /^\d{2}:\d{2}/.test(time)) {
+        chapters.push({ title: cleanTitle, time });
+      }
+    });
+    return chapters;
   }
 };
 var index_default = new JasmrExtension();

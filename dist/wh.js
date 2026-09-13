@@ -45338,7 +45338,7 @@ function buildQueryVariants(title, romaji) {
 var metadata = {
   id: "wh",
   name: "WH",
-  version: "1.0.0",
+  version: "1.0.1",
   type: "anime",
   lang: "en",
   mature: true,
@@ -45362,12 +45362,12 @@ function whDecode(encoded) {
 var WhExtension = class {
   metadata = metadata;
   cache = new SimpleCache();
-  async fetchHtml(url) {
+  async fetchHtml(url, referer = BASE_URL + "/") {
     try {
       const res = await fetch(url, {
         headers: {
           "User-Agent": "Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36",
-          Referer: BASE_URL + "/"
+          Referer: referer
         },
         signal: AbortSignal.timeout(15e3)
       });
@@ -45385,18 +45385,19 @@ var WhExtension = class {
     if (!html3) return [];
     const $2 = load(html3);
     const results = [];
-    $2("article, .post-item, .video-block").each((_, el) => {
-      const link = $2(el).find("a").first();
-      const href = link.attr("href") || "";
-      const title = $2(el).find(".entry-title, .title").text().trim() || link.attr("title") || "";
+    $2("article, .item").each((_, el) => {
+      const titleEl = $2(el).find(".data h3 a, h3 a, .title a, a[title]").first();
+      const rawTitle = titleEl.text().trim() || titleEl.attr("title") || $2(el).find("img").attr("title") || "";
+      const cleanTitle = rawTitle.replace(/^Watch\s+Hentai\s+/i, "").replace(/\[.*?\]/g, "").split("\n")[0].trim();
+      const href = titleEl.attr("href") || $2(el).find("a").first().attr("href") || "";
       const img = $2(el).find("img").attr("data-src") || $2(el).find("img").attr("src") || "";
       const slug = href.replace(BASE_URL, "").replace(/^\/+|\/+$/g, "");
-      if (title && slug) {
+      if (cleanTitle && slug && !slug.startsWith("videos/") && !results.find((r) => r.id === slug)) {
         results.push({
           _id: slug,
           id: slug,
-          name: title,
-          englishName: title,
+          name: cleanTitle,
+          englishName: cleanTitle,
           thumbnail: img,
           type: "OVA",
           isAdult: true
@@ -45422,28 +45423,81 @@ var WhExtension = class {
     return null;
   }
   async getEpisodes(showId) {
-    const html3 = await this.fetchHtml(`${BASE_URL}/${showId}/`);
+    const cleanId = showId.replace(/^\/+|\/+$/g, "");
+    const pageUrl = `${BASE_URL}/${cleanId}/`;
+    const html3 = await this.fetchHtml(pageUrl);
     if (!html3) return null;
     const $2 = load(html3);
     const episodes = [];
-    $2(".episodes a, .episode-list a").each((_, el) => {
-      const num = $2(el).text().trim().replace(/[^0-9]/g, "");
-      if (num && !episodes.includes(num)) episodes.push(num);
+    const epUrls = /* @__PURE__ */ new Map();
+    $2("ul.episodios li a, .episodios li a, .episodios a").each((_, el) => {
+      const href = $2(el).attr("href") || "";
+      if (!href || href.startsWith("#") || !href.includes("/videos/")) return;
+      const text3 = $2(el).text() || "";
+      const m = text3.match(/Episode\s*(\d+)/i) || href.match(/episode-(\d+)/i) || text3.match(/(\d+)/);
+      if (m) {
+        const num = m[1];
+        if (!episodes.includes(num)) {
+          episodes.push(num);
+          epUrls.set(num, href);
+        }
+      }
     });
     if (episodes.length === 0) episodes.push("1");
+    if (epUrls.size > 0) {
+      this.cache.set(`ep_urls_${cleanId}`, Object.fromEntries(epUrls), 3600);
+    }
     return {
       episodes,
       description: $2(".entry-content p").first().text().trim() || ""
     };
   }
   async getStreamUrls(showId, episodeNumber) {
-    const html3 = await this.fetchHtml(`${BASE_URL}/${showId}/episode-${episodeNumber}/`) || await this.fetchHtml(`${BASE_URL}/${showId}/`);
-    if (!html3) return [];
+    const cleanId = showId.replace(/^\/+|\/+$/g, "");
+    const cachedUrls = this.cache.get(`ep_urls_${cleanId}`);
+    let epUrl = cachedUrls ? cachedUrls[String(episodeNumber)] : null;
+    if (!epUrl) {
+      const baseSlug = cleanId.replace(/^series\//, "");
+      epUrl = `${BASE_URL}/videos/${baseSlug}-episode-${episodeNumber}-id-01/`;
+    }
+    let epHtml = await this.fetchHtml(epUrl);
+    if (!epHtml && epUrl.includes("-id-01")) {
+      epHtml = await this.fetchHtml(epUrl.replace("-id-01", ""));
+    }
+    if (!epHtml) {
+      epHtml = await this.fetchHtml(`${BASE_URL}/${cleanId}/`);
+    }
+    if (!epHtml) return [];
+    const $2 = load(epHtml);
+    const iframe = $2("#search_iframe, iframe.metaframe, iframe");
+    const playerUrl = iframe.attr("data-primary-player-url") || iframe.attr("data-alternate-player-url") || $2('meta[itemprop="contentUrl"]').attr("content") || iframe.attr("src");
     const sources = [];
-    const encodedMatches = html3.matchAll(/data-video=["']([^"']+)["']/g);
+    if (playerUrl && playerUrl.startsWith("http")) {
+      const playerHtml = await this.fetchHtml(playerUrl, epUrl);
+      if (playerHtml) {
+        const mp4Matches = [...playerHtml.matchAll(/https?:\/\/[^\s"'<>]+\.(?:mp4|m3u8)[^\s"'<>]*/g)].map((m) => m[0]);
+        const uniqueLinks = [...new Set(mp4Matches)];
+        if (uniqueLinks.length > 0) {
+          sources.push({
+            sourceName: "WH Direct",
+            links: uniqueLinks.map((l) => ({ resolutionStr: "1080p", link: l, hls: l.includes(".m3u8") })),
+            type: "player"
+          });
+        }
+      }
+      if (sources.length === 0) {
+        sources.push({
+          sourceName: "WH Player",
+          links: [],
+          type: "iframe",
+          iframeUrl: playerUrl
+        });
+      }
+    }
+    const encodedMatches = epHtml.matchAll(/data-video=["']([^"']+)["']/g);
     for (const match of encodedMatches) {
       const decoded = whDecode(match[1]);
-      if (decoded.includes("http")) {
+      if (decoded.includes("http") && !sources.find((s) => s.links?.[0]?.link === decoded)) {
         sources.push({
           sourceName: "WH Stream",
           links: [{ resolutionStr: "Auto", link: decoded, hls: decoded.includes(".m3u8") }],

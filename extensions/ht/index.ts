@@ -13,7 +13,7 @@ import {
 export const metadata: ExtensionMetadata = {
   id: 'ht',
   name: 'HT',
-  version: '1.0.0',
+  version: '1.0.1',
   type: 'anime',
   lang: 'en',
   mature: true,
@@ -49,7 +49,9 @@ export class HtExtension implements AnimeExtension {
         id: v.titleSlug || v.slug,
         name: v.title,
         englishName: v.title,
-        thumbnail: v.cover || v.thumb,
+        thumbnail: (v.cover || v.thumb)
+          ? ((v.cover || v.thumb).startsWith('http') ? (v.cover || v.thumb) : `${BASE_URL}${v.cover || v.thumb}`)
+          : '',
         type: 'OVA',
         isAdult: true,
       }))
