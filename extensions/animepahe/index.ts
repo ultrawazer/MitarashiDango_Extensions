@@ -41,6 +41,7 @@ interface AnimePaheEpisode {
   session?: string
   release_session?: string
   title?: string
+  duration?: string
 }
 
 interface AnimePaheApiResponse<T> {
@@ -49,6 +50,20 @@ interface AnimePaheApiResponse<T> {
   items?: T[]
   last_page?: number
   lastPage?: number
+}
+
+function parseDurationString(d?: string): number | undefined {
+  if (!d) return undefined
+  const parts = d.split(':')
+  if (parts.length === 3) {
+    const s = parseInt(parts[0], 10) * 3600 + parseInt(parts[1], 10) * 60 + parseInt(parts[2], 10)
+    return Number.isFinite(s) && s > 0 ? s : undefined
+  }
+  if (parts.length === 2) {
+    const s = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10)
+    return Number.isFinite(s) && s > 0 ? s : undefined
+  }
+  return undefined
 }
 
 export class AnimePaheExtension implements AnimeExtension {
@@ -261,6 +276,7 @@ export class AnimePaheExtension implements AnimeExtension {
         let page = 1
         let lastPage = 1
         let foundSession: string | null = null
+        let foundDuration: number | undefined
         while (page <= lastPage && !foundSession) {
           const epUrl = `${this.API_URL}?m=release&id=${showId}&sort=episode_asc&page=${page}`
           const relData = await this.makeRequest<AnimePaheApiResponse<AnimePaheEpisode>>(epUrl, 'json', undefined, context)
@@ -271,6 +287,7 @@ export class AnimePaheExtension implements AnimeExtension {
             const num = String(ep.episode ?? ep.number ?? '')
             if (num === String(episodeNumber)) {
               foundSession = ep.session || ep.release_session || null
+              if (ep.duration) foundDuration = parseDurationString(ep.duration)
               break
             }
           }

@@ -45348,6 +45348,19 @@ var metadata = {
   description: "Stream anime directly from AnimePahe with sub/dub support",
   authUrl: "https://animepahe.pw"
 };
+function parseDurationString(d) {
+  if (!d) return void 0;
+  const parts = d.split(":");
+  if (parts.length === 3) {
+    const s = parseInt(parts[0], 10) * 3600 + parseInt(parts[1], 10) * 60 + parseInt(parts[2], 10);
+    return Number.isFinite(s) && s > 0 ? s : void 0;
+  }
+  if (parts.length === 2) {
+    const s = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+    return Number.isFinite(s) && s > 0 ? s : void 0;
+  }
+  return void 0;
+}
 var AnimePaheExtension = class {
   metadata = metadata;
   BASE_URL = "https://animepahe.pw";
@@ -45519,6 +45532,7 @@ var AnimePaheExtension = class {
         let page = 1;
         let lastPage = 1;
         let foundSession = null;
+        let foundDuration;
         while (page <= lastPage && !foundSession) {
           const epUrl = `${this.API_URL}?m=release&id=${showId}&sort=episode_asc&page=${page}`;
           const relData = await this.makeRequest(epUrl, "json", void 0, context);
@@ -45529,6 +45543,7 @@ var AnimePaheExtension = class {
             const num = String(ep.episode ?? ep.number ?? "");
             if (num === String(episodeNumber)) {
               foundSession = ep.session || ep.release_session || null;
+              if (ep.duration) foundDuration = parseDurationString(ep.duration);
               break;
             }
           }
