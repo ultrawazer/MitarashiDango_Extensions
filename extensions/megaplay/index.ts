@@ -1,4 +1,4 @@
-import { createDecipheriv } from 'crypto'
+import { createDecipheriv, createHmac } from 'crypto'
 import {
   AnimeExtension,
   ExtensionMetadata,
@@ -14,11 +14,60 @@ import {
 export const metadata: ExtensionMetadata = {
   id: 'megaplay',
   name: 'MegaPlay',
-  version: '1.1.0',
+  version: '1.1.1',
   type: 'anime',
   lang: 'en',
   mature: false,
   description: 'Direct HLS anime streams from MegaPlay with decrypted sources and sub/dub support',
+}
+
+
+const MEGAPLAY_CDN_TOKEN_KEY = 'MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s'
+const MEGAPLAY_CDN_TOKEN_TTL_SECONDS = 120
+
+function base64UrlEncode(input: Buffer | string): string {
+  return Buffer.from(input)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+}
+
+function isNexabloomMasterUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return (
+      parsed.hostname.toLowerCase().endsWith('nexabloom.top') &&
+      parsed.pathname.includes('master.m3u8')
+    )
+  } catch {
+    return false
+  }
+}
+
+function signNexabloomMasterUrl(
+  masterUrl: string,
+  ttlSeconds: number = MEGAPLAY_CDN_TOKEN_TTL_SECONDS
+): string {
+  const match = masterUrl.match(/\/([a-f0-9]{32})\/([a-f0-9]{32})\//i)
+  if (!match) return masterUrl
+
+  const path = `${match[1].toLowerCase()}/${match[2].toLowerCase()}`
+  const expires = Math.floor(Date.now() / 1000) + ttlSeconds
+  const message = `${expires}|${path}`
+  const signature = base64UrlEncode(
+    createHmac('sha256', MEGAPLAY_CDN_TOKEN_KEY).update(message).digest()
+  )
+  const token = `${base64UrlEncode(message)}.${signature}`
+
+  try {
+    const parsed = new URL(masterUrl)
+    parsed.searchParams.set('token', token)
+    return parsed.href
+  } catch {
+    const separator = masterUrl.includes('?') ? '&' : '?'
+    return `${masterUrl}${separator}token=${encodeURIComponent(token)}`
+  }
 }
 
 export class MegaPlayExtension implements AnimeExtension {
@@ -328,10 +377,12 @@ export class MegaPlayExtension implements AnimeExtension {
     const links: VideoLink[] = []
     for (const s of sources) {
       if (s.file.includes('.m3u8')) {
+        const signedMaster = isNexabloomMasterUrl(s.file) ? signNexabloomMasterUrl(s.file) : s.file
         try {
-          const masterRes = await fetch(s.file, {
+          const masterRes = await fetch(signedMaster, {
             headers: {
               Referer: 'https://megaplay.buzz/',
+              Origin: 'https://megaplay.buzz',
               'User-Agent': this.megaPlayHeaders['User-Agent'],
             },
             signal: AbortSignal.timeout(10000),
@@ -347,13 +398,14 @@ export class MegaPlayExtension implements AnimeExtension {
                 (attrs.match(/RESOLUTION=\d+x(\d+)/)?.[1] ?? '') + 'p' ||
                 ''
               if (!label || label === 'p') continue
-              const variantUrl = new URL(m[2], s.file).href
+              const variantUrl = new URL(m[2], signedMaster).href
               links.push({
                 resolutionStr: label,
                 link: variantUrl,
                 hls: true,
                 headers: {
                   Referer: 'https://megaplay.buzz/',
+                  Origin: 'https://megaplay.buzz',
                   'User-Agent': this.megaPlayHeaders['User-Agent'],
                 },
               })
@@ -364,10 +416,11 @@ export class MegaPlayExtension implements AnimeExtension {
         }
         links.push({
           resolutionStr: 'Auto',
-          link: s.file,
+          link: signedMaster,
           hls: true,
           headers: {
             Referer: 'https://megaplay.buzz/',
+            Origin: 'https://megaplay.buzz',
             'User-Agent': this.megaPlayHeaders['User-Agent'],
           },
         })
@@ -378,6 +431,7 @@ export class MegaPlayExtension implements AnimeExtension {
           hls: false,
           headers: {
             Referer: 'https://megaplay.buzz/',
+            Origin: 'https://megaplay.buzz',
             'User-Agent': this.megaPlayHeaders['User-Agent'],
           },
         })
